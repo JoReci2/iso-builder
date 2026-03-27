@@ -1,0 +1,165 @@
+---
+- name: Build custom AlmaLinux ISO with latest stable version
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    almalinux_major_version: "9"
+    arch: "x86_64"
+    work_dir: "/tmp/iso-builder"
+    mount_dir: "/mnt/almalinux"
+    repo_base_url: "https://repo.almalinux.org/almalinux"
+    iso_type: "minimal"
+
+  tasks:
+    - name: Ensure required tools are installed
+      package:
+        name:
+          - genisoimage
+          - syslinux
+          - isomd5sum
+          - xorriso
+          - curl
+        state: present
+
+    - name: Fetch AlmaLinux repository index to determine latest stable version
+      uri:
+        url: "{{ repo_base_url }}/"
+        return_content: true
+      register: repo_index
+
+    - name: Extract latest stable AlmaLinux {{ almalinux_major_version }}.x version
+      set_fact:
+        almalinux_version: >-
+          {{ repo_index.content
+             | regex_findall('href="(' + almalinux_major_version + '\.\d+)/"')
+             | sort(reverse=true)
+             | first }}
+
+    - name: Display detected AlmaLinux version
+      debug:
+        msg: "Latest stable AlmaLinux version detected: {{ almalinux_version }}"
+
+    - name: Set ISO filename and paths
+      set_fact:
+        iso_filename: "AlmaLinux-{{ almalinux_version }}-{{ arch }}-{{ iso_type }}.iso"
+        iso_label: "AlmaLinux-{{ almalinux_version | replace('.', '-') }}-{{ arch }}-{{ iso_type }}"
+        custom_iso_label: "AlmaLinux-{{ almalinux_version }}-{{ arch }}-custom"
+        custom_iso_filename: "AlmaLinux-{{ almalinux_version }}-{{ arch }}-custom.iso"
+
+    - name: Create working directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ work_dir }}"
+        - "{{ mount_dir }}"
+
+    - name: Download AlmaLinux {{ almalinux_version }} minimal ISO
+      get_url:
+        url: "{{ repo_base_url }}/{{ almalinux_version }}/isos/{{ arch }}/{{ iso_filename }}"
+        dest: "{{ work_dir }}/{{ iso_filename }}"
+        mode: "0644"
+      register: iso_download
+
+    - name: Mount source ISO
+      mount:
+        path: "{{ mount_dir }}"
+        src: "{{ work_dir }}/{{ iso_filename }}"
+        fstype: iso9660
+        opts: "loop,ro"
+        state: mounted
+
+    - name: Copy source ISO contents to working directory
+      synchronize:
+        src: "{{ mount_dir }}/"
+        dest: "{{ work_dir }}/almalinux/"
+        recursive: true
+      delegate_to: localhost
+
+    - name: Unmount source ISO
+      mount:
+        path: "{{ mount_dir }}"
+        state: unmounted
+
+    - name: Fix permissions on copied ISO contents
+      file:
+        path: "{{ work_dir }}/almalinux"
+        state: directory
+        mode: "u+w"
+        recurse: true
+
+    - name: Copy custom EFI grub configuration
+      copy:
+        src: "{{ playbook_dir }}/EFI/BOOT/grub.cfg"
+        dest: "{{ work_dir }}/almalinux/EFI/BOOT/grub.cfg"
+        mode: "0644"
+
+    - name: Copy custom isolinux configuration
+      copy:
+        src: "{{ playbook_dir }}/isolinux/isolinux.cfg"
+        dest: "{{ work_dir }}/almalinux/isolinux/isolinux.cfg"
+        mode: "0644"
+
+    - name: Copy kickstart files
+      copy:
+        src: "{{ playbook_dir }}/kickstart/"
+        dest: "{{ work_dir }}/almalinux/kickstart/"
+        mode: "0644"
+
+    - name: Build custom ISO
+      command: >
+        mkisofs
+        -o {{ work_dir }}/{{ custom_iso_filename }}
+        -b isolinux/isolinux.bin
+        -J -R -l
+        -c isolinux/boot.cat
+        -no-emul-boot
+        -boot-load-size 4
+        -boot-info-table
+        -eltorito-alt-boot
+        -e images/efiboot.img
+        -no-emul-boot
+        -graft-points
+        -V "{{ custom_iso_label }}"
+        {{ work_dir }}/almalinux
+      args:
+        creates: "{{ work_dir }}/{{ custom_iso_filename }}"
+      register: mkisofs_result
+
+    - name: Make ISO hybrid bootable (BIOS + UEFI)
+      command: isohybrid --uefi {{ work_dir }}/{{ custom_iso_filename }}
+      args:
+        creates: "{{ work_dir }}/{{ custom_iso_filename }}.isohybrid.stamp"
+      register: isohybrid_result
+
+    - name: Create isohybrid stamp file
+      file:
+        path: "{{ work_dir }}/{{ custom_iso_filename }}.isohybrid.stamp"
+        state: touch
+        mode: "0644"
+      when: isohybrid_result is changed
+
+    - name: Implant ISO MD5 checksum
+      command: implantisomd5 {{ work_dir }}/{{ custom_iso_filename }}
+      args:
+        creates: "{{ work_dir }}/{{ custom_iso_filename }}.md5.stamp"
+      register: md5_result
+
+    - name: Create MD5 stamp file
+      file:
+        path: "{{ work_dir }}/{{ custom_iso_filename }}.md5.stamp"
+        state: touch
+        mode: "0644"
+      when: md5_result is changed
+
+    - name: Display output ISO location
+      debug:
+        msg: "Custom ISO built successfully: {{ work_dir }}/{{ custom_iso_filename }}"
+
+    - name: Clean up extracted ISO directory
+      file:
+        path: "{{ work_dir }}/almalinux"
+        state: absent
