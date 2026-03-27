@@ -1,5 +1,49 @@
 # Create the custom iso
 
+## Automated build with Ansible (recommended)
+
+The included `playbook.yml` automates the entire ISO build process and
+automatically detects the latest stable AlmaLinux 9 release.
+
+### Prerequisites
+
+- Ansible 2.9 or later
+- A Linux host with `sudo` privileges (for mounting the ISO and installing packages)
+
+### Run the playbook
+
+```bash
+ansible-playbook playbook.yml
+```
+
+The playbook will:
+1. Install the required build tools (`genisoimage`, `syslinux`, `isomd5sum`, `xorriso`)
+2. Detect the latest stable AlmaLinux 9.x version from the official repository
+3. Download the AlmaLinux minimal ISO
+4. Extract the ISO contents and overlay the custom configuration files
+5. Build the final custom ISO using `mkisofs`, `isohybrid`, and `implantisomd5`
+
+The finished ISO is written to `/tmp/iso-builder/AlmaLinux-<version>-x86_64-custom.iso`.
+
+### Variables
+
+You can override the following variables on the command line:
+
+| Variable | Default | Description |
+|---|---|---|
+| `almalinux_major_version` | `9` | Major version series to build for |
+| `arch` | `x86_64` | Target CPU architecture |
+| `iso_type` | `minimal` | Source ISO type (`minimal`, `dvd`, `boot`) |
+| `work_dir` | `/tmp/iso-builder` | Working / output directory |
+
+Example – build for a specific major version:
+
+```bash
+ansible-playbook playbook.yml -e almalinux_major_version=9
+```
+
+---
+
 ## Extract the source
 
 ```bash
