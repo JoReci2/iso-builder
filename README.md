@@ -48,7 +48,7 @@ ansible-playbook playbook.yml -e almalinux_major_version=9
 
 ```bash
 mkdir /mnt/almalinux
-mount -o loop AlmaLinux-9.5-x86_64-minimal.ios /mnt/almalinux
+mount -o loop AlmaLinux-9.5-x86_64-minimal.iso /mnt/almalinux
 cp -rv /mnt/almalinux .
 umount /mnt/almalinux
 ```
